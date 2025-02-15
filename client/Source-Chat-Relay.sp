@@ -1,5 +1,3 @@
-#include "SCR-Version"
-
 #include <sourcemod>
 #include <socket>
 #tryinclude <morecolors> // Morecolors defines a max buffer as well as bytebuffer but bytebuffer does if defined check
@@ -10,10 +8,9 @@
 
 #pragma semicolon 1
 
-#define PLUGIN_AUTHOR "Fishy"
-
 #define MAX_EVENT_NAME_LENGTH 128
 #define MAX_COMMAND_LENGTH 512
+// #define DEBUG
 
 #pragma newdecls required
 
@@ -33,6 +30,7 @@ ConVar g_cPort;
 ConVar g_cPrefix;
 ConVar g_cFlag;
 ConVar g_cHostname;
+ConVar g_cTimeStamp;
 
 // Event convars
 ConVar g_cPlayerEvent;
@@ -323,9 +321,9 @@ methodmap EventMessage < BaseMessage
 public Plugin myinfo = 
 {
 	name = "Source Chat Relay",
-	author = PLUGIN_AUTHOR,
+	author = "Fishy, maxime1907, .Rushaway, Koen",
 	description = "Communicate between Discord & In-Game, monitor server without being in-game, control the flow of messages and user base engagement!",
-	version = PLUGIN_VERSION,
+	version = "2.3.0",
 	url = "https://keybase.io/RumbleFrog"
 };
 
@@ -341,8 +339,6 @@ public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max
 
 public void OnPluginStart()
 {
-	CreateConVar("rf_scr_version", PLUGIN_VERSION, "Source Chat Relay Version", FCVAR_REPLICATED | FCVAR_SPONLY | FCVAR_DONTRECORD | FCVAR_NOTIFY);
-
 	g_cHost = CreateConVar("rf_scr_host", "127.0.0.1", "Relay Server Host", FCVAR_PROTECTED);
 
 	g_cPort = CreateConVar("rf_scr_port", "57452", "Relay Server Port", FCVAR_PROTECTED);
@@ -353,13 +349,17 @@ public void OnPluginStart()
 
 	g_cHostname = CreateConVar("rf_scr_hostname", "", "The hostname/displayname to send with messages. If left empty, it will use the server's hostname", FCVAR_NONE);
 
+	g_cTimeStamp = CreateConVar("rf_scr_timestamp", "1", "Enable timestamp on messages", FCVAR_NONE, true, 0.0, true, 1.0);
+
 	// Start basic event convars
 	g_cPlayerEvent = CreateConVar("rf_scr_event_player", "0", "Enable player connect/disconnect events", FCVAR_NONE, true, 0.0, true, 1.0);
 	
 	g_cBotPlayerEvent = CreateConVar("rf_scr_event_botplayer", "0", "Enable bot player connect/disconnect events", FCVAR_NONE, true, 0.0, true, 1.0);
 
 	g_cMapEvent = CreateConVar("rf_scr_event_map", "0", "Enable map start/end events", FCVAR_NONE, true, 0.0, true, 1.0);
-	
+
+	RegAdminCmd("sm_reloadscr", Command_ReloadSCR, ADMFLAG_BAN, "Reload the plugin to try debug SCR");
+
 	AutoExecConfig(true, "Source-Server-Relay");
 	
 	g_hSocket = SocketCreate(SOCKET_TCP, OnSocketError);
@@ -475,7 +475,7 @@ public void OnConfigsExecuted()
 
 		GetCurrentMap(sMap, sizeof sMap);
 
-		EventMessage("Map Start", sMap).Dispatch();
+		EventMessage("**Map Start**", sMap).Dispatch();
 	}
 }
 
@@ -625,7 +625,7 @@ public void HandlePackets(const char[] sBuffer, int iSize)
 
 				GetCurrentMap(sMap, sizeof sMap);
 
-				EventMessage("Map Start", sMap).Dispatch();
+				EventMessage("**Map Start**", sMap).Dispatch();
 			}
 		}
 		default:
@@ -666,22 +666,23 @@ public void ePlayerJoinLeave(Handle event, const char[] name, bool dontBroadcast
 		return;
 
 	char sName[MAX_NAME_LENGTH];
-
 	GetEventString(event, "name", sName, sizeof(sName), "");
 
 	if (name[0] == '\0')
 	{
-		PrintToServer("client %N has no name (?)", iClient);
+		#if defined DEBUG
+		PrintToServer("Client %N has no name (?)", iClient);
+		#endif
 		return;
 	}
 
 	if (connect)
 	{
-		EventMessage("Player Connected", sName).Dispatch();
+		EventMessage("*Player Connected*", sName).Dispatch();
 	}
 	else
 	{
-		EventMessage("Player Disconnected", sName).Dispatch();
+		EventMessage("*Player Disconnected*", sName).Dispatch();
 	}
 }
 
@@ -694,7 +695,7 @@ public void OnMapEnd()
 
 	GetCurrentMap(sMap, sizeof sMap);
 
-	EventMessage("Map Ended", sMap).Dispatch();
+	EventMessage("**Map Ended**", sMap).Dispatch();
 }
 
 public void OnClientSayCommand_Post(int client, const char[] command, const char[] sArgs)
@@ -726,11 +727,16 @@ public void OnClientSayCommand_Post(int client, const char[] command, const char
 
 void DispatchMessage(int iClient, const char[] sMessage)
 {
-	char sID[64], sName[MAX_NAME_LENGTH], tMessage[MAX_COMMAND_LENGTH];
+	char sID[64], sName[MAX_NAME_LENGTH], tMessage[MAX_COMMAND_LENGTH], sFinalMessage[MAX_COMMAND_LENGTH];
 
 	Action aResult;
 
-	strcopy(tMessage, MAX_COMMAND_LENGTH, sMessage);
+	strcopy(tMessage, sizeof(tMessage), sMessage);
+	StripQuotes(tMessage);
+
+	// If the message is a command or empty, don't send it
+	if (tMessage[0] == '/' || tMessage[0] == '@' || strlen(tMessage) == 0 || IsChatTrigger())
+		return;
 
 	if (!GetClientAuthId(iClient, AuthId_SteamID64, sID, sizeof sID))
 	{
@@ -742,16 +748,49 @@ void DispatchMessage(int iClient, const char[] sMessage)
 		return;
 	}
 
+	// Block certain characters that leads to un-excepted formatting on Discord
+	ReplaceString(sFinalMessage, sizeof(sFinalMessage), "`", "\\`");
+	ReplaceString(sFinalMessage, sizeof(sFinalMessage), "~", "\\~");
+	ReplaceString(sFinalMessage, sizeof(sFinalMessage), ">", "\\>");
+	ReplaceString(sFinalMessage, sizeof(sFinalMessage), "<", "\\<");
+	ReplaceString(sFinalMessage, sizeof(sFinalMessage), "_", "\\_");
+	ReplaceString(sFinalMessage, sizeof(sFinalMessage), "*", "\\*");
+	ReplaceString(sFinalMessage, sizeof(sFinalMessage), "|", "\\|");
+	ReplaceString(sFinalMessage, sizeof(sFinalMessage), "/", "୵"); // Prevent URLs from being embedded
+	ReplaceString(sFinalMessage, sizeof(sFinalMessage), ".", "¸");
+	ReplaceString(sFinalMessage, sizeof(sFinalMessage), "@", "ⓐ"); // Because it is a webhook, it bypasses the permission
+
+	// Format the final message to include timestamp before the name
+	// Note: We open the code block before the timestamp/name and close it after the message to only have one code block
+	char sNameFormatted[MAX_NAME_LENGTH];
+	if (g_cTimeStamp.BoolValue)
+		FormatEx(sNameFormatted, sizeof(sNameFormatted), "<t:%d:T> | `%s", GetTime(), sName);
+	else
+		FormatEx(sNameFormatted, sizeof(sNameFormatted), "`%s", sName);
+
+	// Format message to prevent mardown formatting on Discord
+	FormatEx(sFinalMessage, sizeof(sFinalMessage), "%s`", tMessage);
+
+	#if defined DEBUG
+	PrintToConsoleAll("====== DispatchMessage =====");
+	PrintToConsoleAll("sID: %s", sID);
+	PrintToConsoleAll("sName: %s", sName);
+	PrintToConsoleAll("sNameFormatted: %s", sNameFormatted);
+	PrintToConsoleAll("sMessage: %s", sMessage);
+	PrintToConsoleAll("sFinalMessage: %s", sFinalMessage);
+	PrintToConsoleAll("====== DispatchMessage =====");
+	#endif
+
 	Call_StartForward(g_hMessageSendForward);
 	Call_PushCell(iClient);
-	Call_PushStringEx(sName, MAX_NAME_LENGTH, SM_PARAM_STRING_UTF8 | SM_PARAM_STRING_COPY, SM_PARAM_COPYBACK);
-	Call_PushStringEx(tMessage, MAX_COMMAND_LENGTH, SM_PARAM_STRING_UTF8 | SM_PARAM_STRING_COPY, SM_PARAM_COPYBACK);
+	Call_PushStringEx(sNameFormatted, sizeof(sNameFormatted), SM_PARAM_STRING_UTF8 | SM_PARAM_STRING_COPY, SM_PARAM_COPYBACK);
+	Call_PushStringEx(sFinalMessage, sizeof(sFinalMessage), SM_PARAM_STRING_UTF8 | SM_PARAM_STRING_COPY, SM_PARAM_COPYBACK);
 	Call_Finish(aResult);
 
 	if (aResult >= Plugin_Handled)
 		return;
 
-	ChatMessage(IdentificationSteam, sID, sName, tMessage).Dispatch();
+	ChatMessage(IdentificationSteam, sID, sNameFormatted, sFinalMessage).Dispatch();
 }
 
 public int Native_SendMessage(Handle plugin, int numParams)
@@ -988,4 +1027,14 @@ bool SupportsHexColor(EngineVersion e)
 		default:
 			return false;
 	}
+}
+
+public Action Command_ReloadSCR(int client, int args)
+{
+	char sFilename[256];
+	GetPluginFilename(INVALID_HANDLE, sFilename, sizeof(sFilename));
+	ServerCommand("sm plugins reload %s", sFilename);
+	ReplyToCommand(client, "[SCR] Please wait.. Plugin is reloading..");
+	LogAction(-1, -1, "\"%L\" reloaded SourceChatRelay Plugin", client);
+	return Plugin_Handled;
 }
