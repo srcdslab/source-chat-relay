@@ -10,7 +10,6 @@
 
 #define MAX_EVENT_NAME_LENGTH 128
 #define MAX_COMMAND_LENGTH 512
-// #define DEBUG
 
 #pragma newdecls required
 
@@ -31,6 +30,7 @@ ConVar g_cPrefix;
 ConVar g_cFlag;
 ConVar g_cHostname;
 ConVar g_cTimeStamp;
+ConVar g_cDebug;
 
 // Event convars
 ConVar g_cPlayerEvent;
@@ -351,6 +351,8 @@ public void OnPluginStart()
 
 	g_cTimeStamp = CreateConVar("rf_scr_timestamp", "1", "Enable timestamp on messages", FCVAR_NONE, true, 0.0, true, 1.0);
 
+	g_cDebug = CreateConVar("rf_scr_debug", "0", "Enable debug mode", FCVAR_NONE, true, 0.0, true, 1.0);
+
 	// Start basic event convars
 	g_cPlayerEvent = CreateConVar("rf_scr_event_player", "0", "Enable player connect/disconnect events", FCVAR_NONE, true, 0.0, true, 1.0);
 	
@@ -367,9 +369,8 @@ public void OnPluginStart()
 	SocketSetOption(g_hSocket, SocketReuseAddr, 1);
 	SocketSetOption(g_hSocket, SocketKeepAlive, 1);
 	
-	#if defined DEBUG
-	SocketSetOption(g_hSocket, DebugMode, 1);
-	#endif
+	if (g_cDebug.BoolValue)
+		SocketSetOption(g_hSocket, DebugMode, 1);
 
 	// ClientIndex, ClientName, Message
 	g_hMessageSendForward = CreateGlobalForward(
@@ -565,13 +566,14 @@ public void HandlePackets(const char[] sBuffer, int iSize)
 				return;
 			}
 
-			#if defined DEBUG
-			PrintToConsoleAll("====== Chat Message Packet =====");
-			PrintToConsoleAll("sEntity: %s", sEntity);
-			PrintToConsoleAll("sName: %s", sName);
-			PrintToConsoleAll("sMessage: %s", sMessage);
-			PrintToConsoleAll("====== Chat Message Packet =====");
-			#endif
+			if (g_cDebug.BoolValue)
+			{
+				PrintToConsoleAll("====== Chat Message Packet =====");
+				PrintToConsoleAll("sEntity: %s", sEntity);
+				PrintToConsoleAll("sName: %s", sName);
+				PrintToConsoleAll("sMessage: %s", sMessage);
+				PrintToConsoleAll("====== Chat Message Packet =====");
+			}
 
 			if (SupportsHexColor(g_evEngine))
 				CPrintToChatAll("{gold}[%s] {azure}%s{white}: {grey}%s", sEntity, sName, sMessage);
@@ -670,9 +672,8 @@ public void ePlayerJoinLeave(Handle event, const char[] name, bool dontBroadcast
 
 	if (name[0] == '\0')
 	{
-		#if defined DEBUG
-		PrintToServer("Client %N has no name (?)", iClient);
-		#endif
+		if (g_cDebug.BoolValue)
+			PrintToServer("Client %N has no name (?)", iClient);
 		return;
 	}
 
@@ -771,15 +772,16 @@ void DispatchMessage(int iClient, const char[] sMessage)
 	// Format message to prevent mardown formatting on Discord
 	FormatEx(sFinalMessage, sizeof(sFinalMessage), "%s`", tMessage);
 
-	#if defined DEBUG
-	PrintToConsoleAll("====== DispatchMessage =====");
-	PrintToConsoleAll("sID: %s", sID);
-	PrintToConsoleAll("sName: %s", sName);
-	PrintToConsoleAll("sNameFormatted: %s", sNameFormatted);
-	PrintToConsoleAll("sMessage: %s", sMessage);
-	PrintToConsoleAll("sFinalMessage: %s", sFinalMessage);
-	PrintToConsoleAll("====== DispatchMessage =====");
-	#endif
+	if (g_cDebug.BoolValue)
+	{
+		PrintToConsoleAll("====== DispatchMessage =====");
+		PrintToConsoleAll("sID: %s", sID);
+		PrintToConsoleAll("sName: %s", sName);
+		PrintToConsoleAll("sNameFormatted: %s", sNameFormatted);
+		PrintToConsoleAll("sMessage: %s", sMessage);
+		PrintToConsoleAll("sFinalMessage: %s", sFinalMessage);
+		PrintToConsoleAll("====== DispatchMessage =====");
+	}
 
 	Call_StartForward(g_hMessageSendForward);
 	Call_PushCell(iClient);
