@@ -96,7 +96,7 @@ jobs:
           go build -ldflags "-s -w -X github.com/rumblefrog/source-chat-relay/server/config.SCRVER=${{ env.SCRVER }} -extldflags '-static'" -o build/windows-server
 
       - name: Upload server artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Server
           path: server/build/
