@@ -18,7 +18,7 @@ jobs:
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set version env
         run: |
@@ -96,7 +96,7 @@ jobs:
           go build -ldflags "-s -w -X github.com/rumblefrog/source-chat-relay/server/config.SCRVER=${{ env.SCRVER }} -extldflags '-static'" -o build/windows-server
 
       - name: Upload server artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Server
           path: server/build/
@@ -108,12 +108,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-20.04]
+        os: [ubuntu-24.04]
         include:
-          - os: ubuntu-20.04
+          - os: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Build sourcemod plugin
         uses: maxime1907/action-sourceknight@v1
         with:
@@ -125,7 +125,7 @@ jobs:
           cp -R .sourceknight/package/* /tmp/package
 
       - name: Upload build archive for test runners
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Plugin
           path: /tmp/package
@@ -136,7 +136,7 @@ jobs:
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Install NodeJS
         uses: actions/setup-node@v3
@@ -164,7 +164,7 @@ jobs:
       - server
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
 
       - uses: dev-drprasad/delete-tag-and-release@v0.2.1
@@ -191,7 +191,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
 
       - name: Versioning
         run: |
