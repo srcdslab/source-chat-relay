@@ -31,7 +31,7 @@ ConVar g_cPrefix;
 ConVar g_cFlag;
 ConVar g_cHostname;
 ConVar g_cTimeStamp;
-ConVar g_cSteamID3;
+ConVar g_cAuthIdType;
 ConVar g_cDebug;
 
 // Event convars
@@ -353,7 +353,7 @@ public void OnPluginStart()
 
 	g_cTimeStamp = CreateConVar("rf_scr_timestamp", "1", "Enable timestamp on messages", FCVAR_NONE, true, 0.0, true, 1.0);
 
-	g_cSteamID3 = CreateConVar("rf_scr_steamid3", "0", "Enable SteamID3 format for messages", FCVAR_NONE, true, 0.0, true, 1.0);
+	g_cAuthIdType = CreateConVar("rf_scr_authid_type", "2", "AuthID type used for display [0 = Engine, 1 = Steam2, 2 = Steam3, 3 = Steam64]", FCVAR_NONE, true, 0.0, true, 3.0);
 
 	g_cDebug = CreateConVar("rf_scr_debug", "0", "Enable debug mode", FCVAR_NONE, true, 0.0, true, 1.0);
 
@@ -745,7 +745,7 @@ public void OnClientSayCommand_Post(int client, const char[] command, const char
 
 void DispatchMessage(int iClient, const char[] sMessage)
 {
-	char sID[64], sID3[64], sName[MAX_NAME_LENGTH], tMessage[MAX_COMMAND_LENGTH], sFinalMessage[MAX_COMMAND_LENGTH];
+	char sID[64], sDisplayID[64], sName[MAX_NAME_LENGTH], tMessage[MAX_COMMAND_LENGTH], sFinalMessage[MAX_COMMAND_LENGTH];
 
 	Action aResult;
 
@@ -756,12 +756,18 @@ void DispatchMessage(int iClient, const char[] sMessage)
 	if (tMessage[0] == '/' || tMessage[0] == '@' || strlen(tMessage) == 0 || IsChatTrigger())
 		return;
 
+	AuthIdType authType = view_as<AuthIdType>(g_cAuthIdType.IntValue);
 	if (!GetClientAuthId(iClient, AuthId_SteamID64, sID, sizeof sID))
 	{
 		return;
 	}
 
-	if (g_cSteamID3.BoolValue && !GetClientAuthId(iClient, AuthId_Steam3, sID3, sizeof sID3))
+	// Get the display ID based on the selected auth type
+	if (authType == AuthId_SteamID64)
+	{
+		strcopy(sDisplayID, sizeof(sDisplayID), sID);
+	}
+	else if (!GetClientAuthId(iClient, authType, sDisplayID, sizeof sDisplayID))
 	{
 		return;
 	}
@@ -784,10 +790,7 @@ void DispatchMessage(int iClient, const char[] sMessage)
 	ReplaceString(sFinalMessage, sizeof(sFinalMessage), "@", "ⓐ"); // Because it is a webhook, it bypasses the permission
 
 	char sNameFormatted[MAX_NAME_LENGTH];
-	if (g_cSteamID3.BoolValue)
-		FormatEx(sNameFormatted, sizeof(sNameFormatted), "%s | %s", sID3, sName);
-	else
-		FormatEx(sNameFormatted, sizeof(sNameFormatted), "%s", sName);
+	FormatEx(sNameFormatted, sizeof(sNameFormatted), "%s | %s", sDisplayID, sName);
 
 	// Format the final message to include timestamp before the name
 	// Note: We open the code block before the timestamp/name and close it after the message to only have one code block
@@ -804,8 +807,7 @@ void DispatchMessage(int iClient, const char[] sMessage)
 	{
 		PrintToConsoleAll("====== DispatchMessage =====");
 		PrintToConsoleAll("sID: %s", sID);
-		if (g_cSteamID3.BoolValue)
-			PrintToConsoleAll("sID3: %s", sID3);
+		PrintToConsoleAll("sDisplayID: %s", sDisplayID);
 		PrintToConsoleAll("sName: %s", sName);
 		PrintToConsoleAll("sNameFormatted: %s", sNameFormatted);
 		PrintToConsoleAll("sMessage: %s", sMessage);
