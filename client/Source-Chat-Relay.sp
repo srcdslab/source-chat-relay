@@ -22,6 +22,7 @@ int g_iPort = 57452;
 int g_iFlag;
 
 bool g_bFlag;
+bool g_bSocketErrorLogged;
 
 // Core convars
 ConVar g_cHost;
@@ -30,6 +31,7 @@ ConVar g_cPrefix;
 ConVar g_cFlag;
 ConVar g_cHostname;
 ConVar g_cTimeStamp;
+ConVar g_cAuthIdType;
 ConVar g_cDebug;
 
 // Event convars
@@ -323,7 +325,7 @@ public Plugin myinfo =
 	name = "Source Chat Relay",
 	author = "Fishy, maxime1907, .Rushaway, Koen",
 	description = "Communicate between Discord & In-Game, monitor server without being in-game, control the flow of messages and user base engagement!",
-	version = "2.3.0",
+	version = "2.3.1",
 	url = "https://keybase.io/RumbleFrog"
 };
 
@@ -350,6 +352,8 @@ public void OnPluginStart()
 	g_cHostname = CreateConVar("rf_scr_hostname", "", "The hostname/displayname to send with messages. If left empty, it will use the server's hostname", FCVAR_NONE);
 
 	g_cTimeStamp = CreateConVar("rf_scr_timestamp", "1", "Enable timestamp on messages", FCVAR_NONE, true, 0.0, true, 1.0);
+
+	g_cAuthIdType = CreateConVar("rf_scr_authid_type", "2", "AuthID type used for display [0 = Engine, 1 = Steam2, 2 = Steam3, 3 = Steam64]", FCVAR_NONE, true, 0.0, true, 3.0);
 
 	g_cDebug = CreateConVar("rf_scr_debug", "0", "Enable debug mode", FCVAR_NONE, true, 0.0, true, 1.0);
 
@@ -514,7 +518,15 @@ public void OnSocketError(Handle socket, int errorType, int errorNum, any ary)
 {
 	StartReconnectTimer();
 
-	LogError("Source Chat Relay socket error %i (errno %i)", errorType, errorNum);
+	if (!g_bSocketErrorLogged)
+	{
+		g_bSocketErrorLogged = true;
+		LogError("Source Chat Relay socket error %i (errno %i)", errorType, errorNum);
+	}
+	else
+	{
+		PrintToServer("Source Chat Relay: Socket error %i (errno %i)", errorType, errorNum);
+	}
 }
 
 public void OnSocketConnected(Handle socket, any arg)
@@ -687,6 +699,11 @@ public void ePlayerJoinLeave(Handle event, const char[] name, bool dontBroadcast
 	}
 }
 
+public void OnMapStart()
+{
+	g_bSocketErrorLogged = false;
+}
+
 public void OnMapEnd()
 {
 	if (!g_cMapEvent.BoolValue)
@@ -728,7 +745,7 @@ public void OnClientSayCommand_Post(int client, const char[] command, const char
 
 void DispatchMessage(int iClient, const char[] sMessage)
 {
-	char sID[64], sName[MAX_NAME_LENGTH], tMessage[MAX_COMMAND_LENGTH], sFinalMessage[MAX_COMMAND_LENGTH];
+	char sID[64], sDisplayID[64], sName[MAX_NAME_LENGTH], tMessage[MAX_COMMAND_LENGTH], sFinalMessage[MAX_COMMAND_LENGTH];
 
 	Action aResult;
 
@@ -739,7 +756,18 @@ void DispatchMessage(int iClient, const char[] sMessage)
 	if (tMessage[0] == '/' || tMessage[0] == '@' || strlen(tMessage) == 0 || IsChatTrigger())
 		return;
 
+	AuthIdType authType = view_as<AuthIdType>(g_cAuthIdType.IntValue);
 	if (!GetClientAuthId(iClient, AuthId_SteamID64, sID, sizeof sID))
+	{
+		return;
+	}
+
+	// Get the display ID based on the selected auth type
+	if (authType == AuthId_SteamID64)
+	{
+		strcopy(sDisplayID, sizeof(sDisplayID), sID);
+	}
+	else if (!GetClientAuthId(iClient, authType, sDisplayID, sizeof sDisplayID))
 	{
 		return;
 	}
@@ -761,13 +789,16 @@ void DispatchMessage(int iClient, const char[] sMessage)
 	ReplaceString(sFinalMessage, sizeof(sFinalMessage), ".", "¸");
 	ReplaceString(sFinalMessage, sizeof(sFinalMessage), "@", "ⓐ"); // Because it is a webhook, it bypasses the permission
 
+	char sNameFormatted[MAX_NAME_LENGTH];
+	FormatEx(sNameFormatted, sizeof(sNameFormatted), "%s | %s", sDisplayID, sName);
+
 	// Format the final message to include timestamp before the name
 	// Note: We open the code block before the timestamp/name and close it after the message to only have one code block
-	char sNameFormatted[MAX_NAME_LENGTH];
+	char sFinalFormat[MAX_NAME_LENGTH];
 	if (g_cTimeStamp.BoolValue)
-		FormatEx(sNameFormatted, sizeof(sNameFormatted), "<t:%d:T> | `%s", GetTime(), sName);
+		FormatEx(sFinalFormat, sizeof(sFinalFormat), "<t:%d:T> | `%s", GetTime(), sNameFormatted);
 	else
-		FormatEx(sNameFormatted, sizeof(sNameFormatted), "`%s", sName);
+		FormatEx(sFinalFormat, sizeof(sFinalFormat), "`%s", sNameFormatted);
 
 	// Format message to prevent mardown formatting on Discord
 	FormatEx(sFinalMessage, sizeof(sFinalMessage), "%s`", tMessage);
@@ -776,6 +807,7 @@ void DispatchMessage(int iClient, const char[] sMessage)
 	{
 		PrintToConsoleAll("====== DispatchMessage =====");
 		PrintToConsoleAll("sID: %s", sID);
+		PrintToConsoleAll("sDisplayID: %s", sDisplayID);
 		PrintToConsoleAll("sName: %s", sName);
 		PrintToConsoleAll("sNameFormatted: %s", sNameFormatted);
 		PrintToConsoleAll("sMessage: %s", sMessage);
@@ -785,14 +817,14 @@ void DispatchMessage(int iClient, const char[] sMessage)
 
 	Call_StartForward(g_hMessageSendForward);
 	Call_PushCell(iClient);
-	Call_PushStringEx(sNameFormatted, sizeof(sNameFormatted), SM_PARAM_STRING_UTF8 | SM_PARAM_STRING_COPY, SM_PARAM_COPYBACK);
+	Call_PushStringEx(sFinalFormat, sizeof(sFinalFormat), SM_PARAM_STRING_UTF8 | SM_PARAM_STRING_COPY, SM_PARAM_COPYBACK);
 	Call_PushStringEx(sFinalMessage, sizeof(sFinalMessage), SM_PARAM_STRING_UTF8 | SM_PARAM_STRING_COPY, SM_PARAM_COPYBACK);
 	Call_Finish(aResult);
 
 	if (aResult >= Plugin_Handled)
 		return;
 
-	ChatMessage(IdentificationSteam, sID, sNameFormatted, sFinalMessage).Dispatch();
+	ChatMessage(IdentificationSteam, sID, sFinalFormat, sFinalMessage).Dispatch();
 }
 
 public int Native_SendMessage(Handle plugin, int numParams)
