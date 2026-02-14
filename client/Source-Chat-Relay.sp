@@ -325,7 +325,7 @@ public Plugin myinfo =
 	name = "Source Chat Relay",
 	author = "Fishy, maxime1907, .Rushaway, Koen",
 	description = "Communicate between Discord & In-Game, monitor server without being in-game, control the flow of messages and user base engagement!",
-	version = "2.3.1",
+	version = "2.3.2",
 	url = "https://keybase.io/RumbleFrog"
 };
 
