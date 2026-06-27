@@ -10,6 +10,7 @@
 
 #define MAX_EVENT_NAME_LENGTH 128
 #define MAX_COMMAND_LENGTH 512
+#define SAYTEXT2_SAFE_BYTES 220
 
 #pragma newdecls required
 
@@ -325,7 +326,7 @@ public Plugin myinfo =
 	name = "Source Chat Relay",
 	author = "Fishy, maxime1907, .Rushaway, Koen",
 	description = "Communicate between Discord & In-Game, monitor server without being in-game, control the flow of messages and user base engagement!",
-	version = "2.3.2",
+	version = "2.3.3",
 	url = "https://keybase.io/RumbleFrog"
 };
 
@@ -564,6 +565,11 @@ public void HandlePackets(const char[] sBuffer, int iSize)
 			StripCharsByBytes(sName, sizeof sName);
 			StripCharsByBytes(sMessage, sizeof sMessage);
 
+			if (SupportsHexColor(g_evEngine))
+				ClampRelayPayloadByPrefix(sMessage, sizeof sMessage, "{gold}[%s] {azure}%s{white}: {grey}", sEntity, sName);
+			else
+				ClampRelayPayloadByPrefix(sMessage, sizeof sMessage, "\x10[%s] \x0C%s\x01: \x08", sEntity, sName);
+
 			Call_StartForward(g_hMessageReceiveForward);
 			Call_PushString(sEntity);
 			Call_PushCell(m.IDType);
@@ -606,6 +612,11 @@ public void HandlePackets(const char[] sBuffer, int iSize)
 			// Strip anything beyond 3 bytes for character as chat can't render it
 			StripCharsByBytes(sEvent, sizeof sEvent);
 			StripCharsByBytes(sData, sizeof sData);
+
+			if (SupportsHexColor(g_evEngine))
+				ClampRelayPayloadByPrefix(sData, sizeof sData, "{gold}[%s]{white}: {grey}", sEvent);
+			else
+				ClampRelayPayloadByPrefix(sData, sizeof sData, "\x10[%s]\x01: \x08", sEvent);
 
 			Call_StartForward(g_hEventReceiveForward);
 			Call_PushStringEx(sEvent, sizeof sEvent, SM_PARAM_STRING_UTF8 | SM_PARAM_STRING_COPY, SM_PARAM_COPYBACK);
@@ -914,6 +925,78 @@ void StripCharsByBytes(char[] sBuffer, int iSize, int iMaxBytes = 3)
 	}
 
 	Format(sBuffer, iSize, "%s", sClone);
+}
+
+void ClampStringBytes(char[] sBuffer, int iSize, int iMaxBytes)
+{
+	if (iMaxBytes <= 0)
+	{
+		sBuffer[0] = '\0';
+		return;
+	}
+
+	int iBytes;
+	int iConsumed = 0;
+
+	char[] sClone = new char[iSize];
+
+	int i = 0;
+	int j = 0;
+	int iBSize = 0;
+
+	while (i < iSize && sBuffer[i] != '\0')
+	{
+		iBytes = IsCharMB(sBuffer[i]);
+
+		if (iBytes == 0)
+			iBSize = 1;
+		else
+			iBSize = iBytes;
+
+		if (iConsumed + iBSize > iMaxBytes)
+			break;
+
+		for (int k = 0; k < iBSize && (j + 1) < iSize; k++)
+		{
+			sClone[j] = sBuffer[i + k];
+			j++;
+		}
+
+		iConsumed += iBSize;
+		i += iBSize;
+	}
+
+	sClone[j] = '\0';
+	Format(sBuffer, iSize, "%s", sClone);
+}
+
+void ClampRelayPayloadByPrefix(char[] sData, int iSize, const char[] sPrefixFmt, any ...)
+{
+	char sPrefix[MAX_BUFFER_LENGTH];
+	VFormat(sPrefix, sizeof sPrefix, sPrefixFmt, 4);
+
+	int iAllowedDataBytes = SAYTEXT2_SAFE_BYTES - strlen(sPrefix);
+
+	if (iAllowedDataBytes < 0)
+		iAllowedDataBytes = 0;
+
+	int iOriginalLen = strlen(sData);
+
+	if (iOriginalLen <= iAllowedDataBytes)
+		return;
+
+	int iClampBytes = iAllowedDataBytes;
+
+	if (iAllowedDataBytes >= 3)
+		iClampBytes -= 3;
+
+	ClampStringBytes(sData, iSize, iClampBytes);
+
+	if (iAllowedDataBytes >= 3)
+		Format(sData, iSize, "%s...", sData);
+
+	if (g_cDebug != null && g_cDebug.BoolValue)
+		LogMessage("Source Chat Relay: Truncated relay payload from %d to %d bytes", iOriginalLen, strlen(sData));
 }
 
 static int localIPRanges[] =
