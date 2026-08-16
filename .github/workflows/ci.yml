@@ -1,13 +1,50 @@
-name: Build & Deploy
+name: CI
 
-on:
-  - push
-  - pull_request
-
-env:
-  SCRVER: ${{ github.sha }}
+on: [push, pull_request, workflow_dispatch]
 
 jobs:
+  build:
+    name: Build Client Plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup SourcePawn compiler
+        uses: rumblefrog/setup-sp@v1.3.1
+        with:
+          version: "1.12.x"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          mkdir -p addons/sourcemod/scripting/include deps
+          git clone --depth=1 https://github.com/nefarius/sm-ext-socket.git deps/ext-socket
+          cp deps/ext-socket/socket.inc addons/sourcemod/scripting/include/
+          git clone --depth=1 https://github.com/Bara/Multi-Colors.git deps/multicolors
+          cp -R deps/multicolors/addons/sourcemod/scripting/include/* addons/sourcemod/scripting/include/
+          git clone --depth=1 https://github.com/rumblefrog/SM-ByteBuffer-Inc.git deps/bytebuffer
+          cp deps/bytebuffer/bytebuffer.inc deps/bytebuffer/bytebuffer_es.inc addons/sourcemod/scripting/include/
+
+      - name: Build sourcemod plugin
+        working-directory: client
+        run: |
+          set -euo pipefail
+          mkdir -p ../addons/sourcemod/plugins
+          spcomp -i include -i ../addons/sourcemod/scripting/include -o ../addons/sourcemod/plugins/Source-Chat-Relay.smx Source-Chat-Relay.sp
+
+      - name: Create package
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/package/addons/sourcemod/plugins
+          cp addons/sourcemod/plugins/*.smx /tmp/package/addons/sourcemod/plugins/
+
+      - name: Upload build archive for test runners
+        uses: actions/upload-artifact@v7
+        with:
+          name: Plugin
+          path: /tmp/package
+
   server:
     name: Build Server
     runs-on: ubuntu-latest
@@ -18,7 +55,7 @@ jobs:
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set version env
         run: |
@@ -58,7 +95,7 @@ jobs:
           wget https://github.com/upx/upx/releases/download/v3.95/upx-3.95-amd64_linux.tar.xz
           tar -xf upx-3.95-amd64_linux.tar.xz
           mv upx-3.95-amd64_linux/upx $GITHUB_WORKSPACE/upx
-      
+
       - name: Process UI
         working-directory: server/ui/template
         run: |
@@ -96,39 +133,10 @@ jobs:
           go build -ldflags "-s -w -X github.com/rumblefrog/source-chat-relay/server/config.SCRVER=${{ env.SCRVER }} -extldflags '-static'" -o build/windows-server
 
       - name: Upload server artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Server
           path: server/build/
-
-  client:
-    name: Build Client
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04]
-        include:
-          - os: ubuntu-24.04
-
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build sourcemod plugin
-        uses: maxime1907/action-sourceknight@v1
-        with:
-          cmd: build
-
-      - name: Create package
-        run: |
-          mkdir -p /tmp/package
-          cp -R .sourceknight/package/* /tmp/package
-
-      - name: Upload build archive for test runners
-        uses: actions/upload-artifact@v4
-        with:
-          name: Plugin
-          path: /tmp/package
 
   doc:
     name: Build Documentation
@@ -136,7 +144,7 @@ jobs:
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install NodeJS
         uses: actions/setup-node@v3
@@ -159,16 +167,13 @@ jobs:
 
   tag:
     name: Tag
-    needs:
-      - client
-      - server
+    needs: [build, server]
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+      - uses: actions/checkout@v7
 
-      - uses: dev-drprasad/delete-tag-and-release@v0.2.1
-        if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+      - uses: dev-drprasad/delete-tag-and-release@v1.1
         with:
           delete_release: true
           tag_name: latest
@@ -176,41 +181,43 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: rickstaa/action-create-tag@v1
-        if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
         with:
-          tag: "latest"
+          tag: latest
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
   release:
     name: Release
-    if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
-    needs:
-      - client
-      - server
-      - tag
+    needs: [build, server, tag]
+    if: |
+      always() &&
+      needs.build.result == 'success' &&
+      needs.server.result == 'success' &&
+      (needs.tag.result == 'success' || needs.tag.result == 'skipped') &&
+      (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
 
       - name: Versioning
         run: |
+          set -euo pipefail
           version="latest"
-          if [[ "${{ github.ref_type }}" == 'tag' ]]; then
-            version=`echo $GITHUB_REF | sed "s/refs\/tags\///"`;
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME}"
           fi
-          echo "RELEASE_VERSION=$version" >> $GITHUB_ENV
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Package
         run: |
-          ls -Rall
-          tar -czf ${{ github.event.repository.name }}-${{ env.RELEASE_VERSION }}.tar.gz Plugin Server
+          set -euo pipefail
+          tar -czf "${{ github.event.repository.name }}-${{ env.RELEASE_VERSION }}.tar.gz" Plugin Server
 
       - name: Release
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: '*.tar.gz'
+          file: "*.tar.gz"
           tag: ${{ env.RELEASE_VERSION }}
           file_glob: true
           overwrite: true
